@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Finanzas del hogar</title>
+<title>Franco Leal Home</title>
 <script src="https://accounts.google.com/gsi/client" async defer></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -390,7 +390,7 @@
 
 <!-- ============ PANTALLA DE LOGIN ============ -->
 <div id="login-screen">
-  <div class="eyebrow">Finanzas del hogar</div>
+  <div class="eyebrow">Franco Leal Home</div>
   <h1>Un libro claro de lo que entra y lo que sale.</h1>
   <p>Ingresa con la cuenta de Google autorizada para registrar movimientos, revisar el presupuesto y cerrar el mes.</p>
   <div id="g_id_signin_container"></div>
@@ -402,7 +402,7 @@
   <header class="topbar">
     <div class="brand">
       <span class="mark">$</span>
-      <h1>Finanzas del hogar</h1>
+      <h1>Franco Leal Home</h1>
     </div>
     <div class="user-chip"><span class="dot"></span><span id="user-name-label"></span></div>
   </header>
@@ -412,6 +412,7 @@
     <button data-view="ingresos">Ingresos</button>
     <button data-view="gastos">Gastos</button>
     <button data-view="presupuesto">Presupuesto</button>
+    <button data-view="comparativo">Comparativo</button>
     <button data-view="cierre">Cierre de mes</button>
   </nav>
 
@@ -419,7 +420,10 @@
     <!-- ---------- RESUMEN ---------- -->
     <div class="view active" id="view-resumen">
       <section class="block">
-        <h2><span class="num">01</span> Este mes</h2>
+        <h2><span class="num">01</span> Resumen del mes</h2>
+        <div class="filters-row">
+          <select id="resumen-mes-select"></select>
+        </div>
         <div class="cards-row" id="resumen-cards"></div>
       </section>
       <section class="block">
@@ -472,6 +476,30 @@
       </section>
     </div>
 
+    <!-- ---------- COMPARATIVO ---------- -->
+    <div class="view" id="view-comparativo">
+      <section class="block">
+        <h2><span class="num">→</span> Comparativo por categoría</h2>
+        <div class="filters-row">
+          <select id="comp-tipo">
+            <option value="gasto">Gastos</option>
+            <option value="ingreso">Ingresos</option>
+          </select>
+          <select id="comp-desde"></select>
+          <select id="comp-hasta"></select>
+        </div>
+        <div class="chart-box" style="margin-bottom:20px;">
+          <h3>Evolución por categoría</h3>
+          <canvas id="chart-comparativo"></canvas>
+        </div>
+        <table class="budget-summary" id="comparativo-tabla">
+          <thead><tr id="comp-tabla-head"></tr></thead>
+          <tbody></tbody>
+          <tfoot></tfoot>
+        </table>
+      </section>
+    </div>
+
     <!-- ---------- CIERRE DE MES ---------- -->
     <div class="view" id="view-cierre">
       <section class="block">
@@ -485,7 +513,7 @@
           <div class="close-summary" id="cierre-summary"></div>
           <div class="close-form" id="cierre-form-wrap">
             <label>Valor a mover al ahorro (puedes editarlo; por defecto es el saldo del mes)</label>
-            <input type="number" id="cierre-valor-ahorro" step="1000">
+            <input type="text" inputmode="numeric" id="cierre-valor-ahorro">
             <div class="modal-actions" style="margin-top:16px;">
               <button class="btn btn-primary" id="btn-cerrar-mes">Cerrar este mes</button>
             </div>
@@ -526,7 +554,7 @@
     </div>
     <div class="field">
       <label>Valor (COP)</label>
-      <input type="number" id="mv-valor" placeholder="0" step="1000">
+      <input type="text" inputmode="numeric" id="mv-valor" placeholder="0">
     </div>
     <div class="field">
       <label>Fecha</label>
@@ -561,10 +589,33 @@ function toast(msg) {
   setTimeout(() => t.classList.remove('show'), 2600);
 }
 
+/* ---- Separadores de miles en campos de valor (soporta negativos) ---- */
+function formatMilesInput(el) {
+  el.addEventListener('input', () => {
+    const neg = el.value.trim().startsWith('-');
+    const digits = el.value.replace(/\D/g, '');
+    el.value = digits ? (neg ? '-' : '') + Number(digits).toLocaleString('es-CO') : (neg ? '-' : '');
+  });
+}
+function rawNumber(el) {
+  const raw = el.value || '';
+  const neg = raw.trim().startsWith('-');
+  const digits = raw.replace(/\D/g, '');
+  const n = Number(digits) || 0;
+  return neg ? -n : n;
+}
+function setFormattedValue(el, num) {
+  const n = Number(num) || 0;
+  el.value = n ? (n < 0 ? '-' : '') + Math.abs(n).toLocaleString('es-CO') : '';
+}
+
 /* ====================================================================
    LOGIN CON GOOGLE
    ==================================================================== */
 window.onload = function () {
+  formatMilesInput(document.getElementById('mv-valor'));
+  formatMilesInput(document.getElementById('cierre-valor-ahorro'));
+
   if (CONFIG.CLIENT_ID.indexOf('PON_AQUI') === 0) {
     document.getElementById('login-screen').innerHTML =
       '<div class="eyebrow">Configuración pendiente</div><h1>Falta configurar la app</h1>' +
@@ -662,23 +713,56 @@ function renderAll() {
   renderResumen();
   renderListas();
   renderPresupuesto();
+  renderComparativo();
   renderCierre();
 }
 
 function mesesDisponibles() {
-  const set = new Set(DATA.movimientos.map(m => m.mes));
-  set.add(mesActual());
+  const set = new Set();
+  DATA.movimientos.forEach(m => set.add(m.mes));
+  DATA.presupuesto.forEach(p => set.add(p.mes));
+  DATA.cierres.forEach(c => set.add(c.mes));
+  // Siempre ofrecemos un rango de meses cercanos (pasados y futuros), aunque
+  // todavía no tengan datos, para poder registrar historial o planear con anticipación.
+  const hoy = new Date();
+  for (let i = -6; i <= 2; i++) {
+    const d = new Date(hoy.getFullYear(), hoy.getMonth() + i, 1);
+    set.add(d.toISOString().substring(0,7));
+  }
   return Array.from(set).sort().reverse();
 }
 
 function poblarSelectoresDeMes() {
   const meses = mesesDisponibles();
-  ['filtro-ingresos-mes','filtro-gastos-mes','filtro-presupuesto-mes','cierre-mes-select'].forEach(id => {
+  ['filtro-ingresos-mes','filtro-gastos-mes','filtro-presupuesto-mes','cierre-mes-select','resumen-mes-select'].forEach(id => {
     const sel = document.getElementById(id);
+    if (!sel) return;
     const prev = sel.value;
     sel.innerHTML = meses.map(m => `<option value="${m}">${etiquetaMes(m)}</option>`).join('');
-    if (meses.includes(prev)) sel.value = prev;
+    sel.value = (prev && meses.includes(prev)) ? prev : mesActual();
   });
+
+  // Selectores del comparativo: se inicializan solo la primera vez con un rango
+  // de los últimos 3 meses, luego se respeta lo que el usuario elija.
+  const compHasta = document.getElementById('comp-hasta');
+  const compDesde = document.getElementById('comp-desde');
+  if (compHasta && compDesde) {
+    const prevHasta = compHasta.value, prevDesde = compDesde.value;
+    compHasta.innerHTML = meses.map(m => `<option value="${m}">${etiquetaMes(m)}</option>`).join('');
+    compDesde.innerHTML = meses.map(m => `<option value="${m}">${etiquetaMes(m)}</option>`).join('');
+    if (prevHasta && meses.includes(prevHasta)) {
+      compHasta.value = prevHasta;
+    } else {
+      compHasta.value = mesActual();
+    }
+    if (prevDesde && meses.includes(prevDesde)) {
+      compDesde.value = prevDesde;
+    } else {
+      const hoy = new Date();
+      const desdeDefault = new Date(hoy.getFullYear(), hoy.getMonth() - 3, 1).toISOString().substring(0,7);
+      compDesde.value = meses.includes(desdeDefault) ? desdeDefault : meses[meses.length - 1];
+    }
+  }
 
   const catsGasto = DATA.categorias.filter(c => c.tipo === 'gasto');
   const selCat = document.getElementById('filtro-gastos-categoria');
@@ -700,7 +784,10 @@ function etiquetaMes(m) {
    RESUMEN
    ==================================================================== */
 function renderResumen() {
-  const mes = mesActual();
+  const sel = document.getElementById('resumen-mes-select');
+  sel.onchange = renderResumen;
+  const mes = sel.value || mesActual();
+
   const movMes = DATA.movimientos.filter(m => m.mes === mes);
   const ingresos = movMes.filter(m => m.tipo === 'ingreso').reduce((a,m) => a + Number(m.valor), 0);
   const gastos = movMes.filter(m => m.tipo === 'gasto').reduce((a,m) => a + Number(m.valor), 0);
@@ -852,13 +939,14 @@ function renderPresupuesto() {
         </div>
         <div class="b-bar-bg"><div class="b-bar-fill ${over ? 'over' : ''}" style="width:${presupuestado>0?pct:0}%"></div></div>
         <div class="b-edit">
-          <input type="number" step="1000" placeholder="Presupuesto" data-cat="${c.nombre}" class="pres-input" value="${presupuestado || ''}">
+          <input type="text" inputmode="numeric" placeholder="Presupuesto" data-cat="${c.nombre}" class="pres-input" value="${presupuestado ? presupuestado.toLocaleString('es-CO') : ''}">
           <button class="btn btn-ghost" style="padding:6px 12px;font-size:12px;" onclick="guardarPresupuesto('${c.nombre.replace(/'/g,"\\'")}', '${mes}')">Guardar</button>
           ${pres ? `<button class="btn btn-ghost" style="padding:6px 12px;font-size:12px;" onclick="borrarPresupuesto('${c.nombre.replace(/'/g,"\\'")}', '${mes}')">Borrar</button>` : ''}
         </div>
       </div>
     `;
   }).join('');
+  document.querySelectorAll('.pres-input').forEach(formatMilesInput);
 
   // Tabla resumen: presupuestado / gastado / saldo
   const tbody = document.querySelector('#presupuesto-tabla tbody');
@@ -895,7 +983,7 @@ function borrarPresupuesto(categoria, mes) {
 
 function guardarPresupuesto(categoria, mes) {
   const input = document.querySelector(`.pres-input[data-cat="${CSS.escape(categoria)}"]`);
-  const valor = Number(input.value) || 0;
+  const valor = rawNumber(input);
   api('setPresupuesto', { mes, categoria, valor }).then(res => {
     if (res.ok) {
       toast('Presupuesto actualizado.');
@@ -903,6 +991,115 @@ function guardarPresupuesto(categoria, mes) {
     }
     toast(res.error || 'No se pudo guardar.');
   });
+}
+
+/* ====================================================================
+   COMPARATIVO POR CATEGORÍA
+   ==================================================================== */
+function rangoMeses(desde, hasta) {
+  const result = [];
+  let [y, m] = desde.split('-').map(Number);
+  const [yh, mh] = hasta.split('-').map(Number);
+  let guard = 0;
+  while ((y < yh || (y === yh && m <= mh)) && guard < 60) {
+    result.push(y + '-' + String(m).padStart(2, '0'));
+    m++;
+    if (m > 12) { m = 1; y++; }
+    guard++;
+  }
+  return result;
+}
+
+const PALETA_COMPARATIVO = ['#D4A94A','#7FA98F','#E2725B','#6B8CAE','#B98BC9','#E8C878','#4E7A6C','#C97A5A','#9AA7D4','#D48CA0'];
+let chartComparativo;
+
+function renderComparativo() {
+  const tipoSel = document.getElementById('comp-tipo');
+  const desdeSel = document.getElementById('comp-desde');
+  const hastaSel = document.getElementById('comp-hasta');
+  if (!tipoSel.value) tipoSel.value = 'gasto';
+  tipoSel.onchange = renderComparativo;
+  desdeSel.onchange = renderComparativo;
+  hastaSel.onchange = renderComparativo;
+
+  const tipo = tipoSel.value;
+  let desde = desdeSel.value, hasta = hastaSel.value;
+  if (!desde || !hasta) return;
+  if (desde > hasta) { const t = desde; desde = hasta; hasta = t; }
+
+  const meses = rangoMeses(desde, hasta);
+
+  // Totales por categoría y mes, incluyendo categorías que ya no estén en el
+  // catálogo actual pero que sí tengan movimientos históricos en el rango.
+  const totales = {};
+  DATA.categorias.filter(c => c.tipo === tipo).forEach(c => {
+    totales[c.nombre] = {};
+    meses.forEach(m => totales[c.nombre][m] = 0);
+  });
+  DATA.movimientos.forEach(mv => {
+    if (mv.tipo !== tipo || !meses.includes(mv.mes)) return;
+    if (!totales[mv.categoria]) {
+      totales[mv.categoria] = {};
+      meses.forEach(m => totales[mv.categoria][m] = 0);
+    }
+    totales[mv.categoria][mv.mes] += Number(mv.valor);
+  });
+
+  const categorias = Object.keys(totales);
+  const ctx = document.getElementById('chart-comparativo').getContext('2d');
+  if (chartComparativo) chartComparativo.destroy();
+
+  if (categorias.length > 0 && meses.length > 0) {
+    chartComparativo = new Chart(ctx, {
+      type: 'line',
+      data: {
+        labels: meses.map(etiquetaMes),
+        datasets: categorias.map((cat, idx) => ({
+          label: cat,
+          data: meses.map(m => totales[cat][m] || 0),
+          borderColor: PALETA_COMPARATIVO[idx % PALETA_COMPARATIVO.length],
+          backgroundColor: PALETA_COMPARATIVO[idx % PALETA_COMPARATIVO.length],
+          tension: 0.25,
+          fill: false
+        }))
+      },
+      options: {
+        plugins: { legend: { labels: { color: '#F4EFE6', font: { size: 11 } } } },
+        scales: {
+          x: { ticks: { color: '#9FB8AE', font: { size: 10 } }, grid: { display: false } },
+          y: { ticks: { color: '#9FB8AE', font: { size: 10 } }, grid: { color: '#2A5147' } }
+        }
+      }
+    });
+  }
+
+  // Tabla de totales por categoría x mes
+  const head = document.getElementById('comp-tabla-head');
+  head.innerHTML = '<th>Categoría</th>' + meses.map(m => `<th>${etiquetaMes(m)}</th>`).join('') + '<th>Total</th>';
+
+  const tbody = document.querySelector('#comparativo-tabla tbody');
+  const tfoot = document.querySelector('#comparativo-tabla tfoot');
+  const totalesPorMes = {}; meses.forEach(m => totalesPorMes[m] = 0);
+  let granTotal = 0;
+
+  if (categorias.length === 0) {
+    tbody.innerHTML = `<tr><td colspan="${meses.length + 2}" style="color:var(--text-muted);text-align:center;padding:20px;">Sin movimientos en este rango.</td></tr>`;
+    tfoot.innerHTML = '';
+    return;
+  }
+
+  tbody.innerHTML = categorias.map(cat => {
+    let totalCat = 0;
+    const celdas = meses.map(m => {
+      const v = totales[cat][m] || 0;
+      totalCat += v; totalesPorMes[m] += v;
+      return `<td>${money(v)}</td>`;
+    }).join('');
+    granTotal += totalCat;
+    return `<tr><td class="cat-name">${cat}</td>${celdas}<td>${money(totalCat)}</td></tr>`;
+  }).join('');
+
+  tfoot.innerHTML = `<tr class="totals"><td>Total</td>${meses.map(m => `<td>${money(totalesPorMes[m])}</td>`).join('')}<td>${money(granTotal)}</td></tr>`;
 }
 
 /* ====================================================================
@@ -933,12 +1130,12 @@ function renderCierre() {
     <div class="mini"><div class="label">Ahorro acumulado actual</div><div class="val">${money(DATA.ahorroAcumulado)}</div></div>
   `;
 
-  document.getElementById('cierre-valor-ahorro').value = saldo;
+  setFormattedValue(document.getElementById('cierre-valor-ahorro'), saldo);
   document.getElementById('cierre-form-wrap').style.display = estaCerrado ? 'none' : 'block';
   document.getElementById('cierre-error').style.display = 'none';
 
   document.getElementById('btn-cerrar-mes').onclick = () => {
-    const valorAhorro = Number(document.getElementById('cierre-valor-ahorro').value);
+    const valorAhorro = rawNumber(document.getElementById('cierre-valor-ahorro'));
     api('cerrarMes', { mes, valorAhorro }).then(res => {
       if (!res.ok) {
         const err = document.getElementById('cierre-error');
@@ -1024,12 +1221,12 @@ document.getElementById('mv-btn-nueva-categoria').onclick = () => {
 document.getElementById('mv-guardar').onclick = () => {
   const categoria = document.getElementById('mv-categoria').value;
   const detalle = document.getElementById('mv-detalle').value.trim();
-  const valor = document.getElementById('mv-valor').value;
+  const valor = rawNumber(document.getElementById('mv-valor'));
   const fecha = document.getElementById('mv-fecha').value;
   const err = document.getElementById('mv-error');
 
   if (!categoria) { err.textContent = 'Selecciona o crea una categoría.'; err.style.display = 'block'; return; }
-  if (!valor || Number(valor) <= 0) { err.textContent = 'Ingresa un valor mayor a 0.'; err.style.display = 'block'; return; }
+  if (!valor || valor <= 0) { err.textContent = 'Ingresa un valor mayor a 0.'; err.style.display = 'block'; return; }
 
   api('addMovimiento', { tipo: currentTipoModal, categoria, detalle, valor, fecha }).then(res => {
     if (!res.ok) { err.textContent = res.error; err.style.display = 'block'; return; }
