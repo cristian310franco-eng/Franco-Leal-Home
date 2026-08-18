@@ -1161,10 +1161,22 @@ function renderCierre() {
         <td>${money(c.saldo)}</td>
         <td>${money(c.valorMovidoAhorro)}</td>
         <td><span class="status-pill ${c.estado}">${c.estado}</span></td>
-        <td>${c.estado === 'cerrado' ? `<button class="reopen-btn" onclick="reabrirMes('${c.mes}')">Reabrir</button>` : ''}</td>
+        <td style="display:flex;gap:6px;">
+          ${c.estado === 'cerrado' ? `<button class="reopen-btn" onclick="reabrirMes('${c.mes}')">Reabrir</button>` : ''}
+          <button class="reopen-btn" onclick="borrarCierreRegistro(${c._row})">Borrar</button>
+        </td>
       </tr>
     `).join('');
   }
+}
+
+function borrarCierreRegistro(row) {
+  if (!confirm('¿Borrar este registro de cierre? Si estaba "cerrado", se revierte el valor que se había movido al ahorro.')) return;
+  api('deleteCierre', { row }).then(res => {
+    if (!res.ok) { toast(res.error || 'No se pudo borrar.'); return; }
+    toast('Registro borrado.');
+    refrescarDatos();
+  });
 }
 
 function reabrirMes(mes) {
