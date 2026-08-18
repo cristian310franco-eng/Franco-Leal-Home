@@ -253,6 +253,13 @@
   }
   .ticket .t-value.ingreso { color: var(--sage); }
   .ticket .t-value.gasto { color: var(--coral); }
+  .ticket .t-right { display: flex; align-items: center; gap: 10px; }
+  .ticket .t-delete {
+    background: none; border: 1px solid var(--border); color: var(--text-muted);
+    width: 26px; height: 26px; border-radius: 4px; cursor: pointer; font-size: 13px;
+    display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+  }
+  .ticket .t-delete:hover { color: var(--coral); border-color: var(--coral); }
   .empty-state {
     color: var(--text-muted); font-size: 14px; padding: 28px 0; text-align: center;
     border: 1px dashed var(--border); border-radius: 4px;
@@ -274,6 +281,16 @@
     width: 130px; background: var(--surface-2); border: 1px solid var(--border); color: var(--text);
     padding: 6px 8px; border-radius: 4px; font-family: var(--font-mono); font-size: 13px;
   }
+  table.budget-summary { width: 100%; border-collapse: collapse; margin-top: 24px; font-size: 13px; }
+  table.budget-summary th {
+    text-align: left; font-family: var(--font-mono); font-size: 11px; text-transform: uppercase;
+    color: var(--text-muted); padding: 8px 10px; border-bottom: 1px solid var(--border);
+  }
+  table.budget-summary td { padding: 10px; border-bottom: 1px solid var(--border); font-family: var(--font-mono); }
+  table.budget-summary td.cat-name { font-family: var(--font-body); font-weight: 600; }
+  table.budget-summary td.saldo-neg { color: var(--coral); }
+  table.budget-summary td.saldo-pos { color: var(--sage); }
+  table.budget-summary tr.totals td { font-weight: 700; border-top: 2px solid var(--border); border-bottom: none; }
 
   /* ============ CIERRE DE MES ============ */
   .close-panel {
@@ -447,6 +464,11 @@
           <select id="filtro-presupuesto-mes"></select>
         </div>
         <div id="presupuesto-list"></div>
+        <table class="budget-summary" id="presupuesto-tabla">
+          <thead><tr><th>Categoría</th><th>Presupuestado</th><th>Gastado</th><th>Saldo</th></tr></thead>
+          <tbody></tbody>
+          <tfoot></tfoot>
+        </table>
       </section>
     </div>
 
@@ -585,7 +607,9 @@ function handleCredentialResponse(response) {
 function bootApp() {
   api('getAll', {}).then(res => {
     if (!res.ok) {
-      document.getElementById('login-error').style.display = 'block';
+      const errEl = document.getElementById('login-error');
+      errEl.textContent = (res.error || 'No pudimos verificar tu acceso.') + (res.debug ? ' — Detalle: ' + res.debug : '');
+      errEl.style.display = 'block';
       localStorage.removeItem('finhogar_idtoken');
       ID_TOKEN = null;
       return;
@@ -781,9 +805,21 @@ function renderLista(tipo, containerId, mesFilterId, catFilterId, personaFilterI
         <span class="t-detail">${m.detalle || '—'}</span>
         <span class="t-meta">${m.fecha} · ${m.persona}</span>
       </div>
-      <div class="t-value ${tipo}">${tipo === 'ingreso' ? '+' : '−'} ${money(m.valor)}</div>
+      <div class="t-right">
+        <div class="t-value ${tipo}">${tipo === 'ingreso' ? '+' : '−'} ${money(m.valor)}</div>
+        <button class="t-delete" title="Borrar" onclick="borrarMovimiento('${m.id}')">✕</button>
+      </div>
     </div>
   `).join('');
+}
+
+function borrarMovimiento(id) {
+  if (!confirm('¿Borrar este movimiento? No se puede deshacer.')) return;
+  api('deleteMovimiento', { id }).then(res => {
+    if (!res.ok) { toast(res.error || 'No se pudo borrar.'); return; }
+    toast('Movimiento borrado.');
+    refrescarDatos();
+  });
 }
 
 /* ====================================================================
@@ -817,11 +853,44 @@ function renderPresupuesto() {
         <div class="b-bar-bg"><div class="b-bar-fill ${over ? 'over' : ''}" style="width:${presupuestado>0?pct:0}%"></div></div>
         <div class="b-edit">
           <input type="number" step="1000" placeholder="Presupuesto" data-cat="${c.nombre}" class="pres-input" value="${presupuestado || ''}">
-          <button class="btn btn-ghost" style="padding:6px 12px;font-size:12px;" data-cat="${c.nombre}" onclick="guardarPresupuesto('${c.nombre.replace(/'/g,"\\'")}', '${mes}')">Guardar</button>
+          <button class="btn btn-ghost" style="padding:6px 12px;font-size:12px;" onclick="guardarPresupuesto('${c.nombre.replace(/'/g,"\\'")}', '${mes}')">Guardar</button>
+          ${pres ? `<button class="btn btn-ghost" style="padding:6px 12px;font-size:12px;" onclick="borrarPresupuesto('${c.nombre.replace(/'/g,"\\'")}', '${mes}')">Borrar</button>` : ''}
         </div>
       </div>
     `;
   }).join('');
+
+  // Tabla resumen: presupuestado / gastado / saldo
+  const tbody = document.querySelector('#presupuesto-tabla tbody');
+  const tfoot = document.querySelector('#presupuesto-tabla tfoot');
+  let totalPres = 0, totalReal = 0;
+  tbody.innerHTML = catsGasto.map(c => {
+    const pres = presMes.find(p => p.categoria === c.nombre);
+    const presupuestado = pres ? Number(pres.valorPresupuestado) : 0;
+    const real = gastosPorCat[c.nombre] || 0;
+    const saldo = presupuestado - real;
+    totalPres += presupuestado; totalReal += real;
+    return `<tr>
+      <td class="cat-name">${c.nombre}</td>
+      <td>${money(presupuestado)}</td>
+      <td>${money(real)}</td>
+      <td class="${saldo < 0 ? 'saldo-neg' : 'saldo-pos'}">${money(saldo)}</td>
+    </tr>`;
+  }).join('');
+  const totalSaldo = totalPres - totalReal;
+  tfoot.innerHTML = `<tr class="totals">
+    <td>Total</td><td>${money(totalPres)}</td><td>${money(totalReal)}</td>
+    <td class="${totalSaldo < 0 ? 'saldo-neg' : 'saldo-pos'}">${money(totalSaldo)}</td>
+  </tr>`;
+}
+
+function borrarPresupuesto(categoria, mes) {
+  if (!confirm('¿Borrar el presupuesto de "' + categoria + '" para ' + etiquetaMes(mes) + '?')) return;
+  api('deletePresupuesto', { mes, categoria }).then(res => {
+    if (!res.ok) { toast(res.error || 'No se pudo borrar.'); return; }
+    toast('Presupuesto borrado.');
+    refrescarDatos();
+  });
 }
 
 function guardarPresupuesto(categoria, mes) {
