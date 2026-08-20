@@ -338,6 +338,7 @@
     transition: transform 0.15s;
   }
   #fab:hover { transform: scale(1.06); }
+  #fab.spin { transform: rotate(45deg); }
 
   .modal-overlay {
     display: none; position: fixed; inset: 0; background: rgba(6,16,13,0.7);
@@ -1086,7 +1087,7 @@ function renderComparativo() {
 
   // Tabla de totales por categoría x mes
   const head = document.getElementById('comp-tabla-head');
-  head.innerHTML = '<th>Categoría</th>' + meses.map(m => `<th>${etiquetaMes(m)}</th>`).join('') + '<th>Total</th>';
+  head.innerHTML = '<th>Categoría</th>' + meses.map(m => `<th>${etiquetaMes(m)}</th>`).join('') + '<th>Promedio</th>';
 
   const tbody = document.querySelector('#comparativo-tabla tbody');
   const tfoot = document.querySelector('#comparativo-tabla tfoot');
@@ -1107,10 +1108,12 @@ function renderComparativo() {
       return `<td>${money(v)}</td>`;
     }).join('');
     granTotal += totalCat;
-    return `<tr><td class="cat-name">${cat}</td>${celdas}<td>${money(totalCat)}</td></tr>`;
+    const promedioCat = meses.length > 0 ? totalCat / meses.length : 0;
+    return `<tr><td class="cat-name">${cat}</td>${celdas}<td>${money(promedioCat)}</td></tr>`;
   }).join('');
 
-  tfoot.innerHTML = `<tr class="totals"><td>Total</td>${meses.map(m => `<td>${money(totalesPorMes[m])}</td>`).join('')}<td>${money(granTotal)}</td></tr>`;
+  const promedioGeneral = meses.length > 0 ? granTotal / meses.length : 0;
+  tfoot.innerHTML = `<tr class="totals"><td>Total</td>${meses.map(m => `<td>${money(totalesPorMes[m])}</td>`).join('')}<td>${money(promedioGeneral)}</td></tr>`;
 }
 
 /* ====================================================================
@@ -1203,8 +1206,14 @@ function reabrirMes(mes) {
    MODAL: NUEVO MOVIMIENTO
    ==================================================================== */
 const modal = document.getElementById('modal-movimiento');
+const fabBtn = document.getElementById('fab');
 document.getElementById('fab').onclick = () => abrirModal();
-document.getElementById('mv-cancelar').onclick = () => modal.classList.remove('active');
+document.getElementById('mv-cancelar').onclick = () => cerrarModal();
+
+function cerrarModal() {
+  modal.classList.remove('active');
+  fabBtn.classList.remove('spin');
+}
 
 function abrirModal(movimiento) {
   editingId = movimiento ? movimiento.id : null;
@@ -1226,6 +1235,7 @@ function abrirModal(movimiento) {
     document.getElementById('mv-subcategoria').value = movimiento.subcategoria || '';
   }
   modal.classList.add('active');
+  fabBtn.classList.add('spin');
 }
 
 function editarMovimiento(id) {
@@ -1303,7 +1313,7 @@ document.getElementById('mv-guardar').onclick = () => {
 
   api(action, payload).then(res => {
     if (!res.ok) { err.textContent = res.error; err.style.display = 'block'; return; }
-    modal.classList.remove('active');
+    cerrarModal();
     toast(editingId ? 'Movimiento actualizado.' : 'Movimiento registrado.');
     editingId = null;
     refrescarDatos();
