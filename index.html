@@ -356,6 +356,7 @@
   }
   .modal .type-switch button.active.gasto { background: rgba(226,114,91,0.15); color: var(--coral); border-color: var(--coral); }
   .modal .type-switch button.active.ingreso { background: rgba(127,169,143,0.15); color: var(--sage); border-color: var(--sage); }
+  .modal .type-switch button:disabled { opacity: 0.55; cursor: not-allowed; }
   .modal .field { margin-bottom: 14px; }
   .modal .field label { display: block; font-size: 12px; color: var(--text-muted); margin-bottom: 6px; }
   .modal select, .modal input {
@@ -586,6 +587,7 @@ let ID_TOKEN = localStorage.getItem('finhogar_idtoken') || null;
 let USER_NAME = localStorage.getItem('finhogar_username') || null;
 let DATA = { movimientos: [], categorias: [], subcategorias: [], presupuesto: [], cierres: [], ahorroAcumulado: 0 };
 let currentTipoModal = 'gasto';
+let editingId = null;
 
 const fmt = new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', maximumFractionDigits: 0 });
 function money(n) { return fmt.format(n || 0); }
@@ -902,6 +904,7 @@ function renderLista(tipo, containerId, mesFilterId, catFilterId, personaFilterI
       </div>
       <div class="t-right">
         <div class="t-value ${tipo}">${tipo === 'ingreso' ? '+' : '−'} ${money(m.valor)}</div>
+        <button class="t-delete" title="Editar" onclick="editarMovimiento('${m.id}')">✎</button>
         <button class="t-delete" title="Borrar" onclick="borrarMovimiento('${m.id}')">✕</button>
       </div>
     </div>
@@ -1203,15 +1206,32 @@ const modal = document.getElementById('modal-movimiento');
 document.getElementById('fab').onclick = () => abrirModal();
 document.getElementById('mv-cancelar').onclick = () => modal.classList.remove('active');
 
-function abrirModal() {
+function abrirModal(movimiento) {
+  editingId = movimiento ? movimiento.id : null;
+  document.querySelector('#modal-movimiento h3').textContent = movimiento ? 'Editar movimiento' : 'Registrar movimiento';
+  document.getElementById('mv-guardar').textContent = movimiento ? 'Guardar cambios' : 'Guardar';
+  document.querySelectorAll('.type-switch button').forEach(b => b.disabled = !!movimiento);
+
   document.getElementById('mv-error').style.display = 'none';
-  document.getElementById('mv-detalle').value = '';
-  document.getElementById('mv-valor').value = '';
+  document.getElementById('mv-detalle').value = movimiento ? (movimiento.detalle || '') : '';
+  setFormattedValue(document.getElementById('mv-valor'), movimiento ? movimiento.valor : '');
   document.getElementById('mv-nueva-categoria').value = '';
   document.getElementById('mv-nueva-subcategoria').value = '';
-  document.getElementById('mv-fecha').value = new Date().toISOString().substring(0,10);
-  setTipoModal('gasto');
+  document.getElementById('mv-fecha').value = movimiento ? movimiento.fecha : new Date().toISOString().substring(0,10);
+
+  setTipoModal(movimiento ? movimiento.tipo : 'gasto');
+  if (movimiento) {
+    document.getElementById('mv-categoria').value = movimiento.categoria;
+    actualizarSubcategoriasModal();
+    document.getElementById('mv-subcategoria').value = movimiento.subcategoria || '';
+  }
   modal.classList.add('active');
+}
+
+function editarMovimiento(id) {
+  const m = DATA.movimientos.find(x => x.id === id);
+  if (!m) { toast('No se encontró ese movimiento.'); return; }
+  abrirModal(m);
 }
 
 document.querySelectorAll('.type-switch button').forEach(btn => {
@@ -1276,10 +1296,16 @@ document.getElementById('mv-guardar').onclick = () => {
   if (!categoria) { err.textContent = 'Selecciona o crea una categoría.'; err.style.display = 'block'; return; }
   if (!valor || valor <= 0) { err.textContent = 'Ingresa un valor mayor a 0.'; err.style.display = 'block'; return; }
 
-  api('addMovimiento', { tipo: currentTipoModal, categoria, subcategoria, detalle, valor, fecha }).then(res => {
+  const action = editingId ? 'updateMovimiento' : 'addMovimiento';
+  const payload = editingId
+    ? { id: editingId, categoria, subcategoria, detalle, valor, fecha }
+    : { tipo: currentTipoModal, categoria, subcategoria, detalle, valor, fecha };
+
+  api(action, payload).then(res => {
     if (!res.ok) { err.textContent = res.error; err.style.display = 'block'; return; }
     modal.classList.remove('active');
-    toast('Movimiento registrado.');
+    toast(editingId ? 'Movimiento actualizado.' : 'Movimiento registrado.');
+    editingId = null;
     refrescarDatos();
   });
 };
