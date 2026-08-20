@@ -391,7 +391,7 @@
 <!-- ============ PANTALLA DE LOGIN ============ -->
 <div id="login-screen">
   <div class="eyebrow">Franco Leal Home</div>
-  <h1>Nuestro Libro de Finanzas.</h1>
+  <h1>Un libro claro de lo que entra y lo que sale.</h1>
   <p>Ingresa con la cuenta de Google autorizada para registrar movimientos, revisar el presupuesto y cerrar el mes.</p>
   <div id="g_id_signin_container"></div>
   <div id="login-error">No pudimos verificar tu acceso. Revisa que hayas iniciado sesión con la cuenta correcta.</div>
@@ -549,6 +549,14 @@
       </div>
     </div>
     <div class="field">
+      <label>Subcategoría (opcional)</label>
+      <select id="mv-subcategoria"><option value="">Sin subcategoría</option></select>
+      <div class="new-cat-row">
+        <input type="text" id="mv-nueva-subcategoria" placeholder="Crear nueva subcategoría...">
+        <button type="button" id="mv-btn-nueva-subcategoria">Agregar</button>
+      </div>
+    </div>
+    <div class="field">
       <label>Detalle</label>
       <input type="text" id="mv-detalle" placeholder="Ej. Mercado quincenal, Éxito">
     </div>
@@ -576,7 +584,7 @@
    ==================================================================== */
 let ID_TOKEN = localStorage.getItem('finhogar_idtoken') || null;
 let USER_NAME = localStorage.getItem('finhogar_username') || null;
-let DATA = { movimientos: [], categorias: [], presupuesto: [], cierres: [], ahorroAcumulado: 0 };
+let DATA = { movimientos: [], categorias: [], subcategorias: [], presupuesto: [], cierres: [], ahorroAcumulado: 0 };
 let currentTipoModal = 'gasto';
 
 const fmt = new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', maximumFractionDigits: 0 });
@@ -888,7 +896,7 @@ function renderLista(tipo, containerId, mesFilterId, catFilterId, personaFilterI
   cont.innerHTML = items.map(m => `
     <div class="ticket">
       <div class="t-left">
-        <span class="t-cat">${m.categoria}</span>
+        <span class="t-cat">${m.categoria}${m.subcategoria ? ' <span style="color:var(--text-muted);font-weight:400;">› ' + m.subcategoria + '</span>' : ''}</span>
         <span class="t-detail">${m.detalle || '—'}</span>
         <span class="t-meta">${m.fecha} · ${m.persona}</span>
       </div>
@@ -1200,6 +1208,7 @@ function abrirModal() {
   document.getElementById('mv-detalle').value = '';
   document.getElementById('mv-valor').value = '';
   document.getElementById('mv-nueva-categoria').value = '';
+  document.getElementById('mv-nueva-subcategoria').value = '';
   document.getElementById('mv-fecha').value = new Date().toISOString().substring(0,10);
   setTipoModal('gasto');
   modal.classList.add('active');
@@ -1215,6 +1224,16 @@ function setTipoModal(tipo) {
   const catSel = document.getElementById('mv-categoria');
   const cats = DATA.categorias.filter(c => c.tipo === tipo);
   catSel.innerHTML = cats.map(c => `<option value="${c.nombre}">${c.nombre}</option>`).join('');
+  actualizarSubcategoriasModal();
+}
+
+document.getElementById('mv-categoria').onchange = actualizarSubcategoriasModal;
+
+function actualizarSubcategoriasModal() {
+  const categoria = document.getElementById('mv-categoria').value;
+  const subSel = document.getElementById('mv-subcategoria');
+  const subs = DATA.subcategorias.filter(s => s.categoria === categoria && s.tipo === currentTipoModal);
+  subSel.innerHTML = '<option value="">Sin subcategoría</option>' + subs.map(s => `<option value="${s.subcategoria}">${s.subcategoria}</option>`).join('');
 }
 
 document.getElementById('mv-btn-nueva-categoria').onclick = () => {
@@ -1226,12 +1245,29 @@ document.getElementById('mv-btn-nueva-categoria').onclick = () => {
     document.getElementById('mv-nueva-categoria').value = '';
     setTipoModal(currentTipoModal);
     document.getElementById('mv-categoria').value = nombre;
+    actualizarSubcategoriasModal();
     toast('Categoría creada.');
+  });
+};
+
+document.getElementById('mv-btn-nueva-subcategoria').onclick = () => {
+  const categoria = document.getElementById('mv-categoria').value;
+  const nombre = document.getElementById('mv-nueva-subcategoria').value.trim();
+  if (!categoria) { toast('Primero selecciona una categoría.'); return; }
+  if (!nombre) return;
+  api('addSubcategoria', { categoria, nombre, tipo: currentTipoModal }).then(res => {
+    if (!res.ok) { toast(res.error || 'No se pudo crear la subcategoría.'); return; }
+    DATA.subcategorias.push({ categoria, subcategoria: nombre, tipo: currentTipoModal });
+    document.getElementById('mv-nueva-subcategoria').value = '';
+    actualizarSubcategoriasModal();
+    document.getElementById('mv-subcategoria').value = nombre;
+    toast('Subcategoría creada.');
   });
 };
 
 document.getElementById('mv-guardar').onclick = () => {
   const categoria = document.getElementById('mv-categoria').value;
+  const subcategoria = document.getElementById('mv-subcategoria').value;
   const detalle = document.getElementById('mv-detalle').value.trim();
   const valor = rawNumber(document.getElementById('mv-valor'));
   const fecha = document.getElementById('mv-fecha').value;
@@ -1240,7 +1276,7 @@ document.getElementById('mv-guardar').onclick = () => {
   if (!categoria) { err.textContent = 'Selecciona o crea una categoría.'; err.style.display = 'block'; return; }
   if (!valor || valor <= 0) { err.textContent = 'Ingresa un valor mayor a 0.'; err.style.display = 'block'; return; }
 
-  api('addMovimiento', { tipo: currentTipoModal, categoria, detalle, valor, fecha }).then(res => {
+  api('addMovimiento', { tipo: currentTipoModal, categoria, subcategoria, detalle, valor, fecha }).then(res => {
     if (!res.ok) { err.textContent = res.error; err.style.display = 'block'; return; }
     modal.classList.remove('active');
     toast('Movimiento registrado.');
